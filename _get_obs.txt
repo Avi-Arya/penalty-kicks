@@ -1,0 +1,45 @@
+def _get_obs(self):
+    # Extract the original observations from the parent class
+    position = self.data.qpos.flat.copy()
+    velocity = self.data.qvel.flat.copy()
+
+    com_inertia = self.data.cinert.flat.copy()
+    com_velocity = self.data.cvel.flat.copy()
+
+    actuator_forces = self.data.qfrc_actuator.flat.copy()
+    external_contact_forces = self.data.cfrc_ext.flat.copy()
+
+    # Ball position and velocity
+    ball_pos = self.data.qpos[-7:-4]  # Ball x, y, z position
+    ball_vel = self.data.qvel[-6:-3]  # Ball x, y, z velocity
+
+    # Humanoid position and velocity
+    humanoid_pos = self.data.qpos[:3]  # Humanoid x, y, z position
+    humanoid_vel = self.data.qvel[:3]  # Humanoid x, y, z velocity
+
+    # Foot angles (example: joint angles for feet, customize as needed)
+    foot_angles = self.data.qpos[7:9]  # Assuming feet are indexed here
+
+    # Relative positions
+    humanoid_to_ball = ball_pos - humanoid_pos  # Vector from humanoid to ball
+    ball_to_goal = self.goal_pos - ball_pos     # Vector from ball to goal
+
+    # Combine all features into the observation
+    additional_features = np.concatenate((
+        ball_pos,       # Ball position
+        ball_vel,       # Ball velocity
+        humanoid_pos,   # Humanoid position
+        humanoid_vel,   # Humanoid velocity
+        foot_angles,    # Foot angles
+        humanoid_to_ball, # Vector from humanoid to ball
+        ball_to_goal    # Vector from ball to goal
+    ))
+
+    # Combine the original observations with the additional features
+    observations = np.concatenate((
+        position, velocity, com_inertia, com_velocity,
+        actuator_forces, external_contact_forces,
+        additional_features
+    ))
+
+    return observations
