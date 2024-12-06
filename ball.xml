@@ -1,7 +1,0 @@
-<mujoco model="urdf_robot">
-  <compiler angle="radian"/>
-
-  <worldbody>
-    <geom size="0.5" rgba="1 1 1 1"/>
-  </worldbody>
-</mujoco>
