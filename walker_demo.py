@@ -224,7 +224,7 @@ class Walker2dEnv(MujocoEnv, utils.EzPickle):
         self.ball_size = 0.12  # Radius of the ball
 
         # 4. Humanoid Dimensions and Position
-        self.humanoid_pos = np.array([0.0, 0.0, 0.0])  # Humanoid starting position
+        self.humanoid_pos = np.array([-0.5, 1, 0.0])  # Humanoid starting position
         self.humanoid_size = np.array([1.0, 0.5, 1.8])  # Rough bounding box (for reference)
 
         # 5. Distance Between Ball and Humanoid
@@ -390,7 +390,8 @@ class Walker2dEnv(MujocoEnv, utils.EzPickle):
             if body_name == 'ball':
                 ball_id = i
                 break
-
+        self.humanoid_pos = self.data.qpos[:3].copy()
+        print(f"Humanoid position: {self.humanoid_pos}")
         if ball_id is None:
             raise ValueError("Body 'ball' not found in the model.")
         self.ball_pos = self.data.xpos[ball_id]
