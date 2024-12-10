@@ -220,11 +220,11 @@ class Walker2dEnv(MujocoEnv, utils.EzPickle):
 
   
          # 3. Ball Dimensions and Position
-        self.ball_pos = np.array([.0, 0.0, 0.12])  # Ball position
+        self.ball_pos = np.array([0.0, 0.0, 0.12])  # Ball position
         self.ball_size = 0.12  # Radius of the ball
 
         # 4. Humanoid Dimensions and Position
-        self.humanoid_pos = np.array([0.0, 0.0, 1.25])  # Humanoid starting position
+        self.humanoid_pos = np.array([0.0, 0.0, 0.0])  # Humanoid starting position
         self.humanoid_size = np.array([1.0, 0.5, 1.8])  # Rough bounding box (for reference)
 
         # 5. Distance Between Ball and Humanoid
@@ -234,6 +234,7 @@ class Walker2dEnv(MujocoEnv, utils.EzPickle):
         # 6. Read Base XML
         gym_path = Path(gym.__file__).parent
         xml_file = gym_path / "envs/mujoco/assets/walker2d.xml"
+        print(xml_file)
         with open(xml_file, 'r') as f:
             xml_contents = f.read()
 
@@ -312,27 +313,105 @@ class Walker2dEnv(MujocoEnv, utils.EzPickle):
 
         observation = np.concatenate((position, velocity)).ravel()
         return observation
+    def compute_reward(
+        self,
+        walker_pos,
+        ball_pos,
+        ball_vel,
+        goal_pos,
+        walker_angular_vel,
+        forward_reward,
+        proximity_weight=1.0,
+        angular_vel_weight=2.0,
+        ball_vel_weight=5.0,
+        goal_proximity_weight=10.0,
+        goal_completion_bonus=100.0
+    ):
+        """
+        Reward function for training the Walker2d to kick the ball into the goal, using hinge angular velocity.
+        
+        Args:
+        - walker_pos: np.array, position of the walker (x, y, z).
+        - ball_pos: np.array, position of the ball (x, y, z).
+        - ball_vel: np.array, velocity of the ball (x, y, z).
+        - goal_pos: np.array, position of the goal center (x, y, z).
+        - walker_angular_vel: np.array, angular velocity of the walker joints.
+        - forward_reward: float, reward defined for forward movement.
+        - proximity_weight: float, weight for the proximity reward.
+        - angular_vel_weight: float, weight for the angular velocity reward.
+        - ball_vel_weight: float, weight for the ball velocity reward.
+        - goal_proximity_weight: float, weight for the goal proximity reward.
+        - goal_completion_bonus: float, bonus for getting the ball into the goal.
+
+        Returns:
+        - reward: float, total reward for the current step.
+        """
+        # Distance from walker to the ball
+        walker_to_ball_dist = np.linalg.norm(ball_pos - walker_pos)
+        ball_to_goal_dist = np.linalg.norm(ball_pos - goal_pos)
+
+        # Ball Proximity Reward: Encourages moving closer to the ball
+        ball_proximity_reward = proximity_weight / (1.0 + walker_to_ball_dist)
+
+        # Angular Velocity Reward: Encourage higher angular velocities near the ball
+        angular_vel_reward = angular_vel_weight * np.sum(
+            walker_angular_vel
+        ) / (1.0 + walker_to_ball_dist)
+
+        # Kicking Reward: Encourage increasing ball velocity
+        kicking_reward = ball_vel_weight * np.linalg.norm(ball_vel)
+
+        # Goal Proximity Reward: Encourage reducing ball distance to the goal
+        goal_proximity_reward = goal_proximity_weight / (1.0 + ball_to_goal_dist)
+
+        # Goal Completion Bonus: Large reward for getting the ball in the goal
+        goal_completion_reward = 0.0
+        if ball_to_goal_dist < 0.5:  # Assume ball is "in goal" if within 0.5 units
+            goal_completion_reward = goal_completion_bonus
+
+        # Combine rewards
+        reward = (
+            forward_reward
+            + ball_proximity_reward
+            + angular_vel_reward
+            + kicking_reward
+            + goal_proximity_reward
+            + goal_completion_reward
+        )
+        return reward
+
 
     def step(self, action):
         x_position_before = self.data.qpos[0]
         self.do_simulation(action, self.frame_skip)
+        # Extract positions and velocities
+        walker_pos = self.data.qpos[:3].copy()
+        ball_pos = self.ball_pos
+        ball_vel = self.data.qvel[9:12].copy()  # Example indices for ball velocity
+        walker_angular_vel = self.data.qvel[3:9].copy()  # Example indices for angular velocity
+        goal_pos = np.array([17.5, 0.0, 0.0])  # Goal position (example)
+
+        # Compute forward reward (already defined)
         x_position_after = self.data.qpos[0]
-        x_velocity = (x_position_after - x_position_before) / self.dt
+        x_position_before = self.data.qpos[0] - self.dt * self.data.qvel[0]  # Approx previous x-position
+        forward_reward = self._forward_reward_weight * (x_position_after - x_position_before) / self.dt
 
-        ctrl_cost = self.control_cost(action)
+        # Compute custom reward
+        reward = self.compute_reward(
+            walker_pos=walker_pos,
+            ball_pos=ball_pos,
+            ball_vel=ball_vel,
+            goal_pos=goal_pos,
+            walker_angular_vel=walker_angular_vel,
+            forward_reward=forward_reward
+        )
 
-        forward_reward = self._forward_reward_weight * x_velocity
-        healthy_reward = self.healthy_reward
-
-        rewards = forward_reward + healthy_reward
-        costs = ctrl_cost
-
+        print(ball_pos)
         observation = self._get_obs()
-        reward = rewards - costs
         terminated = self.terminated
         info = {
             "x_position": x_position_after,
-            "x_velocity": x_velocity,
+            "x_velocity": self.data.qvel[0],
         }
 
         if self.render_mode == "human":
