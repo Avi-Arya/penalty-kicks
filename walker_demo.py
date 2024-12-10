@@ -220,7 +220,7 @@ class Walker2dEnv(MujocoEnv, utils.EzPickle):
 
   
          # 3. Ball Dimensions and Position
-        self.ball_pos = np.array([2.0, 0.0, 0.12])  # Ball position
+        self.ball_pos = np.array([.0, 0.0, 0.12])  # Ball position
         self.ball_size = 0.12  # Radius of the ball
 
         # 4. Humanoid Dimensions and Position
@@ -242,7 +242,7 @@ class Walker2dEnv(MujocoEnv, utils.EzPickle):
             <body name="ball" pos="{self.ball_pos[0]} {self.ball_pos[1]} {self.ball_pos[2]}">
                 <joint name="ball_free" type="free"/>
                 <geom name="ball" type="sphere" size="{self.ball_size}" rgba="1 0 0 1" 
-                    mass="0.45" friction="0.8" condim="4"/>
+                    mass="0.45" friction="0.8" condim="4" contype="1" conaffinity="1"/>
             </body>
             <body name="goal" pos="17.5 0 0">
                 <geom name="crossbar" type="capsule" fromto="0 -{self.goal_width / 2} {self.goal_height} 
