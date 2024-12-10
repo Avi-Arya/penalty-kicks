@@ -2,13 +2,10 @@ import numpy as np
 import gymnasium as gym
 import random
 from gymnasium import utils
-from gymnasium.envs.mujoco.humanoid_v4 import HumanoidEnv
-from gymnasium.envs.mujoco import MujocoEnv
-import os
 from gymnasium.envs.mujoco import MujocoEnv
 from gymnasium.spaces import Box
 from pathlib import Path
-from gymnasium import spaces
+
 
 DEFAULT_CAMERA_CONFIG = {
     "trackbodyid": 2,
@@ -267,12 +264,6 @@ class Walker2dEnv(MujocoEnv, utils.EzPickle):
         )
         modified_xml = modified_xml.replace('</worldbody>', f'{ball_and_goal}</worldbody>')
 
-        # 4. Humanoid Dimensions and Position
-        self.humanoid_pos = np.array([0.0, 0.0, 1.25])  # Humanoid starting position
-        self.humanoid_size = np.array([1.0, 0.5, 1.8])  # Rough bounding box (for reference)
-
-        # 5. Distance Between Ball and Humanoid
-        self.distance_to_ball = np.linalg.norm(self.ball_pos - self.humanoid_pos)
         # Save the modified XML to a temporary file
         self.temp_path = r"C:\Users\sahil\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\gymnasium\envs\mujoco\assets\temp_humanoid_soccer.xml"
         with open(self.temp_path, 'w') as f:
@@ -280,41 +271,8 @@ class Walker2dEnv(MujocoEnv, utils.EzPickle):
 
 
         MujocoEnv.__init__(
-            self, "Walker2d.xml", 4, observation_space=observation_space, **kwargs
+            self, self.temp_path, 4, observation_space=observation_space, **kwargs
         )
-
-        # Define target region
-        self.target = {
-            "region": (self.selected_row, self.selected_col),
-            "pos": (17.5, self.target_y, self.target_z),
-            "size": (0.01, self.region_width / 2, self.region_height / 2)
-        }
-
-        # Observation Space Adjustment
-        self.observation_space = spaces.Box(
-            low=-np.inf,
-            high=np.inf,
-            shape=(self._get_obs().shape[0],),  # Dynamically set shape
-            dtype=np.float64
-        )
-
-        self._reset_noise_scale = 1e-2
-
-        # Additional Variables for Reward Calculation
-        self.fall_threshold = 0.8  # Humanoid z-position threshold for falling
-        self.has_kicked = False  # Flag to check if the ball has been kicked
-        self.kick_threshold_velocity = 1.0  # Minimum velocity to consider a kick effective
-        self.kick_angle_threshold = np.pi / 4  # 45 degrees in radians
-        self._forward_reward_weight = 1.25  # Weight for forward reward
-        self._ctrl_cost_weight = 0.01  # Weight for control cost
-        self._contact_cost_weight = 5e-7  # Weight for contact cost
-        self._healthy_reward = 2.0  # Constant reward for being healthy
-        self._terminate_when_unhealthy = False  # Terminate if unhealthy
-        self._healthy_z_range = (1.0, 10.0)  # Range of z-coordinate for healthy humanoid
-        self._reset_noise_scale = 1e-2  # Scale of random perturbations for initial state
-        self._exclude_current_positions_from_observation = True  # Exclude x, y positions from observation
-        self.fall_recovery_steps = 50  # Number of steps allowed to recover after falling
-        self.fall_steps = 0
 
     @property
     def healthy_reward(self):
@@ -356,111 +314,32 @@ class Walker2dEnv(MujocoEnv, utils.EzPickle):
         return observation
 
     def step(self, action):
-        # Get the target position from self.target
-        target_pos = np.array(self.target["pos"])  # Absolute position
-        
-        # Humanoid position before step (x, y)
-        humanoid_pos_before = self.data.qpos[:2].copy()
-
-        # Ball position before step (x, y, z)
-        ball_pos_before = self.data.qpos[-7:-4].copy()
-
-        # Step the simulation
+        x_position_before = self.data.qpos[0]
         self.do_simulation(action, self.frame_skip)
+        x_position_after = self.data.qpos[0]
+        x_velocity = (x_position_after - x_position_before) / self.dt
+
+        ctrl_cost = self.control_cost(action)
+
+        forward_reward = self._forward_reward_weight * x_velocity
+        healthy_reward = self.healthy_reward
+
+        rewards = forward_reward + healthy_reward
+        costs = ctrl_cost
+
         observation = self._get_obs()
-        reward = 0
-        terminated = not self.is_healthy
-        info = {}
+        reward = rewards - costs
+        terminated = self.terminated
+        info = {
+            "x_position": x_position_after,
+            "x_velocity": x_velocity,
+        }
 
-        # Humanoid position after step (x, y)
-        humanoid_pos_after = self.data.qpos[:2].copy()
-        humanoid_pos_z = self.data.qpos[2]
-        humanoid_velocity = (humanoid_pos_after - humanoid_pos_before) / self.dt
-
-        # Ball position after step (x, y, z)
-        ball_pos_after = self.data.qpos[-7:-4].copy()
-        ball_velocity = (ball_pos_after - ball_pos_before) / self.dt
-
-        # Check if the ball has been kicked
-        ball_kicked = np.linalg.norm(ball_velocity) > self.kick_threshold_velocity
-
-        # Update kick flag
-        if ball_kicked:
-            self.has_kicked = True
-
-        # 1. Positive Reward for Staying Upright
-        if humanoid_pos_z >= self.fall_threshold:
-            reward += 0.05  # Reward for being upright
-        else:
-            reward -= 0.1  # Penalty for falling below threshold
-
-        # 2. Positive Reward for Closing Distance to the Ball (if not yet kicked)
-        if not self.has_kicked:
-            dist_to_ball_before = np.linalg.norm(humanoid_pos_before - ball_pos_before[:2])
-            dist_to_ball_after = np.linalg.norm(humanoid_pos_after - ball_pos_after[:2])
-            distance_progress = dist_to_ball_before - dist_to_ball_after
-            reward += distance_progress * 0.1  # Scale factor for proximity
-
-        # 3. Large Reward for Kicking the Ball
-        if ball_kicked and not hasattr(self, 'kicked_this_step'):
-            # Calculate angle between ball velocity and target direction
-            ball_direction = ball_velocity[:2] / (np.linalg.norm(ball_velocity[:2]) + 1e-6)
-            target_direction = (target_pos[:2] - ball_pos_after[:2]) / (np.linalg.norm(target_pos[:2] - ball_pos_after[:2]) + 1e-6)
-            angle_diff = np.arccos(np.clip(np.dot(ball_direction, target_direction), -1.0, 1.0))
-            angle_bonus = max(0, (self.kick_angle_threshold - angle_diff) / self.kick_angle_threshold)
-
-            # Boost reward by velocity and angle alignment
-            kick_reward = 10.0 + (np.linalg.norm(ball_velocity[:2]) * 2.0) + (angle_bonus * 5.0)
-            reward += kick_reward
-
-            # Mark that the ball was kicked this step to prevent multiple rewards
-            self.kicked_this_step = True
-        else:
-            self.kicked_this_step = False
-
-        # 4. Positive Reward for Ball Closing Distance to the Target
-        dist_to_target_before = np.linalg.norm(ball_pos_before[:2] - target_pos[:2])
-        dist_to_target_after = np.linalg.norm(ball_pos_after[:2] - target_pos[:2])
-        target_progress = dist_to_target_before - dist_to_target_after
-        if target_progress > 0:
-            reward += target_progress * 0.5  # Scale factor for ball progress
-
-        # 5. Really Large Reward for Scoring
-        # Check if the ball is within the target region
-        if (target_pos[0] - self.region_width / 2 <= ball_pos_after[0] <= target_pos[0] + self.region_width / 2 and
-            target_pos[1] - self.region_width / 2 <= ball_pos_after[1] <= target_pos[1] + self.region_width / 2 and
-            target_pos[2] - self.region_height / 2 <= ball_pos_after[2] <= target_pos[2] + self.region_height / 2):
-            reward += 100.0  # Large reward for scoring
-            info["scored"] = True
-            terminated = True  # Optionally terminate the episode upon scoring
-        else:
-            info["scored"] = False
-
-        # 6. Additional Penalization for Control and Contacts (Optional)
-        # You can retain some of the existing penalties if desired
-        ctrl_cost = self._ctrl_cost_weight * np.sum(np.square(action))
-        contact_cost = self._contact_cost_weight * np.sum(np.square(self.data.cfrc_ext))
-        reward -= ctrl_cost
-        reward -= contact_cost
-
-        # Terminate the episode if it exceeds a maximum number of steps
-        time_limit_steps = 2500  # Increased step limit
-        if self.data.time >= self.dt * time_limit_steps:
-            truncated = True  # Episode ends due to time limit
-        
-        # Update info dictionary with additional metrics
-        info.update({
-            "humanoid_position": self.data.qpos[:3].copy(),
-            "ball_position": ball_pos_after,
-            "distance_to_ball": np.linalg.norm(humanoid_pos_after - ball_pos_after[:2]),
-            "distance_ball_to_target": np.linalg.norm(ball_pos_after[:2] - target_pos[:2]),
-            "ball_velocity": ball_velocity,
-            "humanoid_velocity": humanoid_velocity,
-            "fell_down": humanoid_pos_z < self.fall_threshold,
-            "kicked": ball_kicked,
-        })
+        if self.render_mode == "human":
+            self.render()
 
         return observation, reward, terminated, False, info
+
     def reset_model(self):
         noise_low = -self._reset_noise_scale
         noise_high = self._reset_noise_scale
@@ -491,21 +370,16 @@ if __name__ == "__main__":
     
     # Reset the environment
     observation, info = env.reset()
-    os.environ["MUJOCO_LOGGING"] = "1"
-
+    
     try:
-        for _ in range(20):
+        for _ in range(10000):
             # Random action
             action = env.action_space.sample()
+            
             # Step the environment
             observation, reward, terminated, truncated, info = env.step(action)
-            print(observation, reward)
+        
         if terminated or truncated:
-            print("Episode terminated")
             observation, info = env.reset()
-
-    except Exception as e:
-        print(e)
     finally:
-        print("done")
-        env.close()                                                                                                                                             
+        env.close()
