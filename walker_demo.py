@@ -383,6 +383,16 @@ class Walker2dEnv(MujocoEnv, utils.EzPickle):
 
     def step(self, action):
         x_position_before = self.data.qpos[0]
+        ball_id = None
+        for i in range(self.model.nbody):
+            body_name = self.model.names[self.model.name_bodyadr[i]:].split(b'\x00', 1)[0].decode('utf-8')
+            if body_name == 'ball':
+                ball_id = i
+                break
+
+        if ball_id is None:
+            raise ValueError("Body 'ball' not found in the model.")
+        self.ball_pos = self.data.xpos[ball_id]
         self.do_simulation(action, self.frame_skip)
         # Extract positions and velocities
         walker_pos = self.data.qpos[:3].copy()
@@ -405,10 +415,13 @@ class Walker2dEnv(MujocoEnv, utils.EzPickle):
             walker_angular_vel=walker_angular_vel,
             forward_reward=forward_reward
         )
-
-        print(ball_pos)
+        def euclidean_distance(a, b):
+            a = np.array(a)
+            b = np.array(b)
+            return np.linalg.norm(a - b)
+        
         observation = self._get_obs()
-        terminated = self.terminated
+        terminated = euclidean_distance(self.ball_pos, x_position_after) >= 0.75 and abs(np.average(self.data.qvel[9:12].copy())) < 1e-5
         info = {
             "x_position": x_position_after,
             "x_velocity": self.data.qvel[0],
@@ -457,8 +470,9 @@ if __name__ == "__main__":
             
             # Step the environment
             observation, reward, terminated, truncated, info = env.step(action)
-        
-        if terminated or truncated:
-            observation, info = env.reset()
+            
+            if terminated or truncated:
+                print("terminating!")
+                observation, info = env.reset()
     finally:
         env.close()
