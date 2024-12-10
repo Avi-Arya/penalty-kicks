@@ -5,7 +5,7 @@ from gymnasium import utils
 from gymnasium.envs.mujoco import MujocoEnv
 from gymnasium.spaces import Box
 from pathlib import Path
-
+import time
 
 DEFAULT_CAMERA_CONFIG = {
     "trackbodyid": 2,
@@ -238,6 +238,7 @@ class Walker2dEnv(MujocoEnv, utils.EzPickle):
         with open(xml_file, 'r') as f:
             xml_contents = f.read()
 
+        self.time_stamp = time.time()
         # 7. Generate Modular XML
         ball_and_goal = f"""
             <body name="ball" pos="{self.ball_pos[0]} {self.ball_pos[1]} {self.ball_pos[2]}">
@@ -421,7 +422,14 @@ class Walker2dEnv(MujocoEnv, utils.EzPickle):
             return np.linalg.norm(a - b)
         
         observation = self._get_obs()
-        terminated = euclidean_distance(self.ball_pos, x_position_after) >= 0.75 and abs(np.average(self.data.qvel[9:12].copy())) < 1e-5
+        velocity = abs(np.average(self.data.qvel[9:12].copy()))
+        moving = velocity >= 1e-5
+        if moving:
+            self.time_stamp = time.time()
+        terminated = euclidean_distance(self.ball_pos, x_position_after) >= 0.75 and not moving
+
+        if time.time() - self.time_stamp >= 4:
+            terminated = True
         info = {
             "x_position": x_position_after,
             "x_velocity": self.data.qvel[0],
@@ -474,5 +482,6 @@ if __name__ == "__main__":
             if terminated or truncated:
                 print("terminating!")
                 observation, info = env.reset()
+                env.time_stamp = time.time()
     finally:
         env.close()
