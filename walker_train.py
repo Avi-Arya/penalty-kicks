@@ -10,6 +10,9 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from stable_baselines3.common.env_util import make_vec_env
 import sys
 from walker_demo import Walker2dEnv
+from soccer_env import HumanoidSoccerEnv
+from gymnasium.envs.mujoco.humanoid_v4 import HumanoidEnv
+
 
 
 print(f"Current working directory: {sys.path[0]}")
@@ -139,13 +142,13 @@ def create_env(render_mode="rgb_array"):
     """
     Environment creation with potential curriculum learning
     """
-    env = Walker2dEnv(render_mode=render_mode)
+    env = HumanoidEnv()
     return env
 
 def train():
     # Configuration
     total_timesteps = 500000  # Increased training duration
-    n_envs = 4  # Parallel environments for better data collection
+    n_envs = 32  # Parallel environments for better data collection
     
     # Create vectorized environments
     env = make_vec_env(create_env, n_envs=n_envs)
@@ -176,7 +179,7 @@ def train():
         policy=CustomHumanoidSoccerPolicy, 
         env=env, 
         verbose=1, 
-        tensorboard_log="./ppo_walker_final_tensorboard/",
+        tensorboard_log="./humanoid_final_tensorboard/",
         
         learning_rate=1e-3,  # Try a lower learning rate
         n_steps=4096,        # Increase batch size
@@ -195,11 +198,10 @@ def train():
         total_timesteps=total_timesteps, 
         callback=[progress_callback, eval_callback, checkpoint_callback]
     )
-    print("Training completed!")
 
     # Save final model
-    model.save("ppo_walker_final")
-    print("Model saved as ppo_walker_final.zip")
+    model.save("ppo_modifed_final")
+    print("Model saved as ppo_modifed_final.zip")
 
     # Close environments
     env.close()
