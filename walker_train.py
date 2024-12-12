@@ -2,16 +2,16 @@ import torch as th
 import torch.nn as nn
 import gymnasium as gym
 import numpy as np
-from stable_baselines3 import PPO
+from ppo_test import PPO
 from stable_baselines3.common.callbacks import BaseCallback, EvalCallback, CheckpointCallback
 from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from stable_baselines3.common.env_util import make_vec_env
 import sys
-from walker_demo import Walker2dEnv
 from soccer_env import HumanoidSoccerEnv
 from gymnasium.envs.mujoco.humanoid_v4 import HumanoidEnv
+from gymnasium.envs.mujoco.walker2d_v4 import Walker2dEnv
 
 
 
@@ -142,13 +142,15 @@ def create_env(render_mode="rgb_array"):
     """
     Environment creation with potential curriculum learning
     """
-    env = HumanoidEnv()
+    # Using default Mujoco Humanoidv4 as replacement
+    # because custom environment is not well tuned
+    env = Walker2dEnv()
     return env
 
 def train():
     # Configuration
-    total_timesteps = 500000  # Increased training duration
-    n_envs = 32  # Parallel environments for better data collection
+    total_timesteps = 1000000  # Increased training duration
+    n_envs = 48  # Parallel environments for better data collection
     
     # Create vectorized environments
     env = make_vec_env(create_env, n_envs=n_envs)
@@ -163,34 +165,26 @@ def train():
         eval_env, 
         best_model_save_path='./logs/',
         log_path='./logs/', 
-        eval_freq=10000,
+        eval_freq=625,
         deterministic=True, 
         render=False
     )
     
     checkpoint_callback = CheckpointCallback(
-        save_freq=25000, 
-        save_path='./models/',
-        name_prefix='ppo_humanoid_soccer'
+        save_freq=6250, 
+        save_path='./models/walker_2d/ppo_custom_policy_static/',
+        name_prefix='ppo_walker_2d'
     )
 
     # PPO Hyperparameters (Tuned for complex continuous control)
     model = PPO(
-        policy=CustomHumanoidSoccerPolicy, 
+        CustomHumanoidSoccerPolicy, 
         env=env, 
         verbose=1, 
-        tensorboard_log="./humanoid_final_tensorboard/",
-        
-        learning_rate=1e-3,  # Try a lower learning rate
-        n_steps=4096,        # Increase batch size
-        batch_size=128,      # Larger batch
-        n_epochs=5,          # Fewer optimization epochs
-        gamma=0.99,          
-        gae_lambda=0.9,      # Adjust advantage estimation
-        clip_range=0.1,      # Tighter clipping
-        ent_coef=0.005,      # Reduce entropy coefficient
-        vf_coef=0.5,
-        max_grad_norm=1.0    # Looser gradient clipping
+        tensorboard_log="./walker_2d_final_tensorboard/",
+        n_epochs=10,
+        n_steps=1024,
+        batch_size=8192
     )
 
     print("Starting training...")
@@ -200,8 +194,8 @@ def train():
     )
 
     # Save final model
-    model.save("ppo_modifed_final")
-    print("Model saved as ppo_modifed_final.zip")
+    model.save("models/walker_2d/ppo_custom_policy_modified_final_static")
+    print("Model saved as ppo_modified_final.zip")
 
     # Close environments
     env.close()

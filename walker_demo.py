@@ -220,7 +220,7 @@ class Walker2dEnv(MujocoEnv, utils.EzPickle):
 
   
          # 3. Ball Dimensions and Position
-        self.ball_pos = np.array([0.0, 0.0, 0.12])  # Ball position
+        self.ball_pos = np.array([0.5, 0.0, 0.12])  # Ball position
         self.ball_size = 0.12  # Radius of the ball
 
         # 4. Humanoid Dimensions and Position
@@ -246,7 +246,7 @@ class Walker2dEnv(MujocoEnv, utils.EzPickle):
                 <geom name="ball" type="sphere" size="{self.ball_size}" rgba="1 0 0 1" 
                     mass="0.45" friction="0.8" condim="4" contype="1" conaffinity="1"/>
             </body>
-            <body name="goal" pos="17.5 0 0">
+            <body name="goal" pos="7 0 0">
                 <geom name="crossbar" type="capsule" fromto="0 -{self.goal_width / 2} {self.goal_height} 
                     0 {self.goal_width / 2} {self.goal_height}" size="0.1" rgba="0 0 1 1" 
                     contype="2" conaffinity="2"/>
@@ -275,6 +275,7 @@ class Walker2dEnv(MujocoEnv, utils.EzPickle):
         MujocoEnv.__init__(
             self, self.temp_path, 4, observation_space=observation_space, **kwargs
         )
+
 
     @property
     def healthy_reward(self):
@@ -306,13 +307,14 @@ class Walker2dEnv(MujocoEnv, utils.EzPickle):
         return terminated
 
     def _get_obs(self):
-        position = self.data.qpos.flat.copy()
-        velocity = np.clip(self.data.qvel.flat.copy(), -10, 10)
+        # Extract walker-specific positions and velocities
+        walker_qpos = self.data.qpos.flat.copy()[:8]  # First 8 elements are for the walker
+        walker_qvel = np.clip(self.data.qvel.flat.copy()[:9], -10, 10)  # First 9 elements are for the walker
 
-        if self._exclude_current_positions_from_observation:
-            position = position[1:]
 
-        observation = np.concatenate((position, velocity)).ravel()
+
+        # Concatenate position and velocity for the walker
+        observation = np.concatenate((walker_qpos, walker_qvel)).ravel()
         return observation
     def compute_reward(
         self,
@@ -381,6 +383,17 @@ class Walker2dEnv(MujocoEnv, utils.EzPickle):
         )
         return reward
 
+    def reset(self, *, seed=None, options=None):
+        if seed is not None:
+            self.np_random, _ = gym.utils.seeding.np_random(seed)
+        
+        observation = self.reset_model()
+        info = {
+            "x_position": self.data.qpos[0],  # Initial position
+            "x_velocity": self.data.qvel[0],  # Initial velocity
+        }
+        return observation, info
+
 
     def step(self, action):
         x_position_before = self.data.qpos[0]
@@ -391,17 +404,17 @@ class Walker2dEnv(MujocoEnv, utils.EzPickle):
                 ball_id = i
                 break
         self.humanoid_pos = self.data.qpos[:3].copy()
-        print(f"Humanoid position: {self.humanoid_pos}")
+        self.ball_pos = self.data.xpos[ball_id]
+        self.distance_to_ball = np.linalg.norm(self.humanoid_pos - self.ball_pos)
         if ball_id is None:
             raise ValueError("Body 'ball' not found in the model.")
-        self.ball_pos = self.data.xpos[ball_id]
         self.do_simulation(action, self.frame_skip)
         # Extract positions and velocities
         walker_pos = self.data.qpos[:3].copy()
         ball_pos = self.ball_pos
         ball_vel = self.data.qvel[9:12].copy()  # Example indices for ball velocity
         walker_angular_vel = self.data.qvel[3:9].copy()  # Example indices for angular velocity
-        goal_pos = np.array([17.5, 0.0, 0.0])  # Goal position (example)
+        goal_pos = np.array([7.0, 0.0, 0.0])  # Goal position (example)
 
         # Compute forward reward (already defined)
         x_position_after = self.data.qpos[0]
@@ -427,9 +440,9 @@ class Walker2dEnv(MujocoEnv, utils.EzPickle):
         moving = velocity >= 1e-5
         if moving:
             self.time_stamp = time.time()
-        terminated = euclidean_distance(self.ball_pos, x_position_after) >= 0.75 and not moving
+        terminated = euclidean_distance(self.ball_pos, x_position_after) >= 2.0 and not moving
 
-        if time.time() - self.time_stamp >= 4:
+        if time.time() - self.time_stamp >= 3.0:
             terminated = True
         info = {
             "x_position": x_position_after,
