@@ -201,7 +201,7 @@ class PPO(OnPolicyAlgorithm):
 
         continue_training = True
 
-        sigma = 1.0
+        sigma = 1.5
         decay_rate = 0.01
         i = 0
         # train for n_epochs epochs
@@ -210,8 +210,9 @@ class PPO(OnPolicyAlgorithm):
             # Do a complete pass on the rollout buffer
             for rollout_data in self.rollout_buffer.get(self.batch_size):
                 old_parameters = [param.clone() for param in self.policy.parameters()]
-                sigma *= th.exp(-decay_rate * i)
-                i += 1
+                import math
+                # sigma *= (1 - decay_rate)
+                # i += 1
                 actions = rollout_data.actions
                 if isinstance(self.action_space, spaces.Discrete):
                     # Convert discrete action from float to long
